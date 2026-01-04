@@ -1,0 +1,75 @@
+version: '3.8'
+
+services:
+  # 1. TWOJA HURTOWNIA DANYCH (SILVER/GOLD)
+  # Zmieniony wolumen na 'db_data', aby uniknąć problemów z uprawnieniami na Windows/WSL
+  postgres_dw:
+    image: postgres:15
+    container_name: postgres_dw
+    environment:
+      - POSTGRES_USER=admin
+      - POSTGRES_PASSWORD=password123
+      - POSTGRES_DB=currency_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U admin -d currency_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 2. LABORATORIUM (JUPYTER + SPARK) - TU PISZESZ KOD
+  jupyter:
+    image: jupyter/pyspark-notebook:latest
+    container_name: jupyter_spark
+    user: root
+    ports:
+      - "8888:8888"
+      - "4040:4040"
+    volumes:
+      - ./scripts:/home/jovyan/work/scripts
+      - ./data:/home/jovyan/work/data
+    environment:
+      - JUPYTER_ENABLE_LAB=yes
+      - JUPYTER_TOKEN=admin123
+
+  # 3. METADANE DLA AIRFLOW (BAZA WEWNĘTRZNA)
+  airflow_db:
+    image: postgres:15
+    container_name: airflow_db
+    environment:
+      - POSTGRES_USER=airflow
+      - POSTGRES_PASSWORD=airflow
+      - POSTGRES_DB=airflow
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U airflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # 4. ORKIESTRATOR (AIRFLOW) - TU AUTOMATYZUJESZ
+  airflow:
+    image: apache/airflow:2.7.1
+    container_name: airflow_app
+    depends_on:
+      airflow_db:
+        condition: service_healthy
+      postgres_dw:
+        condition: service_healthy
+    environment:
+      - AIRFLOW__CORE__EXECUTOR=LocalExecutor
+      - AIRFLOW__DATABASE__SQL_ALCHEMY_CONN=postgresql+psycopg2://airflow:airflow@airflow_db/airflow
+      - AIRFLOW__CORE__LOAD_EXAMPLES=False
+    volumes:
+      - ./dags:/opt/airflow/dags
+      - ./scripts:/opt/airflow/scripts
+      - ./data:/opt/airflow/data
+    ports:
+      - "8080:8080"
+    command: standalone
+
+# Definicja bezpiecznego wolumenu dla Postgresa
+volumes:
+  db_data:
