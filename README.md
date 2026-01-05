@@ -27,3 +27,5 @@ Projekt oparty jest na **Medallion Architecture**:
 1. Skonfiguruj środowisko: `docker-compose up -d`
 2. Wejdź do Jupytera (port 8888) i uruchom skrypty w folderze `scripts/`.
 3. Połącz się z bazą Postgres (port 5433) aby odpytać dane.
+4.Wejdź do bazy docker exec -it postgres_dw psql -U admin -d currency_db
+5.Listuj tabele \dt

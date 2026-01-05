@@ -1,8 +1,7 @@
 version: '3.8'
 
 services:
-  # 1. TWOJA HURTOWNIA DANYCH (SILVER/GOLD)
-  # Zmieniony wolumen na 'db_data', aby uniknąć problemów z uprawnieniami na Windows/WSL
+  # 1. HURTOWNIA DANYCH
   postgres_dw:
     image: postgres:15
     container_name: postgres_dw
@@ -20,7 +19,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # 2. LABORATORIUM (JUPYTER + SPARK) - TU PISZESZ KOD
+  # 2. LABORATORIUM (JUPYTER + SPARK)
   jupyter:
     image: jupyter/pyspark-notebook:latest
     container_name: jupyter_spark
@@ -29,13 +28,12 @@ services:
       - "8888:8888"
       - "4040:4040"
     volumes:
-      - ./scripts:/home/jovyan/work/scripts
-      - ./data:/home/jovyan/work/data
+      - .:/home/jovyan/work  
     environment:
       - JUPYTER_ENABLE_LAB=yes
       - JUPYTER_TOKEN=admin123
 
-  # 3. METADANE DLA AIRFLOW (BAZA WEWNĘTRZNA)
+  # 3. METADANE DLA AIRFLOW
   airflow_db:
     image: postgres:15
     container_name: airflow_db
@@ -49,7 +47,7 @@ services:
       timeout: 5s
       retries: 5
 
-  # 4. ORKIESTRATOR (AIRFLOW) - TU AUTOMATYZUJESZ
+  # 4. ORKIESTRATOR (AIRFLOW)
   airflow:
     image: apache/airflow:2.7.1
     container_name: airflow_app
@@ -70,6 +68,29 @@ services:
       - "8080:8080"
     command: standalone
 
-# Definicja bezpiecznego wolumenu dla Postgresa
+  # 5. MONITORING - METRYKI
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: prometheus
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml
+    ports:
+      - "9090:9090"
+
+  # 6. MONITORING - WIZUALIZACJA
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+
+# Definicje trwałych wolumenów
 volumes:
   db_data:
+  grafana_data:
