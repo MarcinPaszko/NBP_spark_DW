@@ -32,6 +32,7 @@ services:
     environment:
       - JUPYTER_ENABLE_LAB=yes
       - JUPYTER_TOKEN=admin123
+      - PIP_INSTALL=yfinance
 
   # 3. METADANE DLA AIRFLOW
   airflow_db:
@@ -49,7 +50,7 @@ services:
 
   # 4. ORKIESTRATOR (AIRFLOW)
   airflow:
-    image: apache/airflow:2.7.1
+    build: . 
     container_name: airflow_app
     depends_on:
       airflow_db:
