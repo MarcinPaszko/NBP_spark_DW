@@ -8,7 +8,7 @@ def hello_world():
 with DAG(
     dag_id='01_test_connection',
     start_date=datetime(2026, 1, 1),
-    schedule_interval=None, # Uruchamiamy tylko recznie dla testu
+    schedule_interval=None,
     catchup=False
 ) as dag:
 

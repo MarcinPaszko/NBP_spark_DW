@@ -1,5 +1,8 @@
 pyspark==3.4.1
-yfinance==0.1.70
-multitasking==0.0.11
 pandas<2.0.0
+yahooquery
 requests
+# yfinance zostawiamy na wszelki wypadek, ale yahooquery jest teraz priorytetem
+yfinance
+# multitasking jest wymagany przez starsze wersje yfinance, ale yahooquery go nie potrzebuje
+multitasking

@@ -1,12 +1,26 @@
-from __future__ import annotations
-import yfinance as yf
+from yahooquery import Ticker
+import pandas as pd
 from pyspark.sql import SparkSession
 from pyspark.sql import functions as F
-from datetime import date, datetime, timedelta
-import pandas as pd
-import time
+from datetime import date, timedelta
+import sys
 
-# 1. KONFIGURACJA BAZY
+
+SYMBOLS = [
+    '11B.WA', 'AAPL', 'ABBV', 'ACP.WA', 'ADA-USD', 'ADBE', 'ALE.WA', 'AMZN', 'APT-USD', 'ASB.WA',
+    'ATOM-USD', 'ATT.WA', 'AVAX-USD', 'AVGO', 'BAC', 'BCH-USD', 'BDX.WA', 'BNB-USD', 'BRK-B', 'BTC-USD',
+    'CCC.WA', 'CC=F', 'CDR.WA', 'CL=F', 'CORN', 'COST', 'CPS.WA', 'CT=F', 'CVX', 'DAI-USD', 'DBC',
+    '^DJI', 'DNP.WA', 'DOGE-USD', 'DOT-USD', 'EEM', 'ETC-USD', 'ETH-USD', 'FAN', '^FCHI', 'FIL-USD',
+    '^FTSE', 'GC=F', '^GDAXI', 'GLD', 'GOOGL', 'GPW.WA', '^GSPC', 'HBAR-USD', 'HD', 'HG=F', '^HSI',
+    'HYG', 'IWM', '^IXIC', 'JNJ', 'JO', 'JPM', 'JSW.WA', 'KC=F', 'KGH.WA', 'KO', 'KRU.WA', 'KTY.WA',
+    'LINK-USD', 'LIT', 'LPP.WA', 'LTC-USD', 'MA', 'MATIC-USD', 'MBK.WA', 'META', 'MSFT', '^N225',
+    'NEAR-USD', 'NG=F', 'NVDA', 'OJ=F', 'OPL.WA', 'ORCL', 'PA=F', 'PEO.WA', 'PEP', 'PG', 'PGE.WA',
+    'PICK', 'PKN.WA', 'PKO.WA', 'PL=F', 'PZU.WA', 'QQQ', 'REMX', '^RUT', 'SB=F', 'SHIB-USD', 'SI=F',
+    'SLV', 'SOL-USD', 'SOYB', 'SPL.WA', 'SPY', '^STOXX50E', 'TAN', 'TLT', 'TPE.WA', 'TRX-USD', 'TSLA',
+    'UNH', 'UNI7083-USD', 'UNI-USD', 'URA', 'V', 'VEA', '^VIX', 'VNQ', 'VTI', 'VWO', 'VXUS', 'WEAT',
+    'WMT', 'WOOD', 'XLM-USD', 'XMR-USD', 'XRP-USD', 'ZC=F', 'ZW=F'
+]
+
 DB_CONF = {
     "url": "jdbc:postgresql://postgres_dw:5432/currency_db",
     "user": "admin",
@@ -14,107 +28,105 @@ DB_CONF = {
     "driver": "org.postgresql.Driver"
 }
 
-# Inicjalizacja Sparka
-spark = SparkSession.builder \
-    .appName("Stocks_Final_History_Method") \
-    .config("spark.jars", "/opt/airflow/scripts/postgresql-42.7.3.jar") \
-    .getOrCreate()
+def get_max_dates_dict(spark):
+    """Pobiera słownik {ticker: max_date} z bazy danych."""
+    try:
+        df = spark.read.format("jdbc").options(**DB_CONF).option("dbtable", "f_stock_prices").load()
+        
+        max_dates = df.groupBy("ticker").agg(F.max("trade_date").alias("max_date")).collect()
+        return {row['ticker']: row['max_date'] for row in max_dates}
+    except Exception as e:
+        print(f"Cannot retrive data from db: {e}")
+        return {}
 
-# 2. LISTA TICKERÓW (Pogrupowana dla przejrzystości logów)
-GROUPS = {
-    "USA": ['AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'META', 'TSLA', 'BRK-B', 'UNH', 'V', 'JNJ', 'WMT', 'JPM', 'MA', 'PG', 'AVGO', 'HD', 'CVX', 'ORCL', 'ABBV', 'KO', 'PEP', 'COST', 'BAC', 'ADBE'],
-    "INDEX": ['^GSPC', '^IXIC', '^DJI', '^RUT', '^VIX', '^FTSE', '^GDAXI', '^FCHI', '^N225', '^HSI', '^STOXX50E', 'QQQ', 'SPY', 'IWM', 'EEM', 'VWO', 'VEA', 'VNQ', 'GLD', 'SLV', 'DBC', 'TLT', 'HYG', 'VTI', 'VXUS'],
-    "GPW": ['CDR.WA', 'PKO.WA', 'PKN.WA', 'KGH.WA', 'PZU.WA', 'PEO.WA', 'ALE.WA', 'LPP.WA', 'DNP.WA', 'PGE.WA', 'OPL.WA', 'SPL.WA', 'JSW.WA', 'ACP.WA', 'KRU.WA', 'MBK.WA', 'CPS.WA', 'TPE.WA', 'KTY.WA', 'ATT.WA', 'ASB.WA', 'BDX.WA', 'GPW.WA', '11B.WA', 'CCC.WA'],
-    "CRYPTO": ['BTC-USD', 'ETH-USD', 'SOL-USD', 'BNB-USD', 'XRP-USD', 'ADA-USD', 'DOGE-USD', 'AVAX-USD', 'DOT-USD', 'TRX-USD', 'LINK-USD', 'SHIB-USD', 'LTC-USD', 'DAI-USD', 'BCH-USD', 'ATOM-USD', 'XLM-USD', 'XMR-USD', 'ETC-USD', 'FIL-USD', 'HBAR-USD', 'NEAR-USD'],
-    "COMMODITIES": ['GC=F', 'SI=F', 'CL=F', 'NG=F', 'HG=F', 'ZC=F', 'ZW=F', 'KC=F', 'CC=F', 'CT=F', 'OJ=F', 'PL=F', 'PA=F', 'SB=F', 'SOYB', 'WEAT', 'CORN', 'WOOD', 'LIT', 'REMX', 'TAN', 'FAN', 'PICK', 'URA']
-}
+def chunk_list(lst, n):
+    """Dzieli listę na mniejsze kawałki."""
+    for i in range(0, len(lst), n):
+        yield lst[i:i + n]
 
-TICKERS = [ticker for group in GROUPS.values() for ticker in group]
-
-def ingest_stocks():
-    print(f"Rozpoczynam pobieranie danych (METODA RAW/HISTORY) dla {len(TICKERS)} tickerów...")
+def fetch_and_save():
     
-    # Ustalamy zakres dat (podobnie jak w Twoim udanym teście)
-    # yfinance history start/end
-    end_dt = datetime.now()
-    start_dt = end_dt - timedelta(days=10)
+    spark = SparkSession.builder \
+        .appName("Stocks_Smart_Incremental") \
+        .config("spark.jars", "/opt/airflow/scripts/postgresql-42.7.3.jar") \
+        .getOrCreate()
+
     
+    max_dates_map = get_max_dates_dict(spark)
+    today = date.today()
     all_data = []
+
+    print(f"Starting checks for {len(SYMBOLS)} symbols...")
+
     
-    for ticker in TICKERS:
+    for chunk in chunk_list(SYMBOLS, 30):
+       
+        dates_in_chunk = [max_dates_map.get(s, date(2024, 1, 1)) for s in chunk]
+        min_date_in_chunk = min(dates_in_chunk)
+        
+        start_fetch = min_date_in_chunk + timedelta(days=1)
+
+        
+        if start_fetch >= today:
+            print(f"PAckage {chunk[:3]}... is actual:(last date {min_date_in_chunk}).")
+            continue
+
         try:
-            # Tworzymy obiekt Ticker (bardziej stabilny niż yf.download)
-            t = yf.Ticker(ticker)
-            
-            # Pobieramy historię
-            df = t.history(start=start_dt.strftime('%Y-%m-%d'), 
-                           end=end_dt.strftime('%Y-%m-%d'), 
-                           interval="1d")
+            print(f"Downloading package {chunk[:3]}... from {start_fetch} to {today}")
+            t = Ticker(chunk)
+            df = t.history(start=start_fetch, end=today)
             
             if not df.empty:
-                temp_df = df.reset_index()
-                temp_df['ticker'] = ticker
-                
-                # Czyścimy strefę czasową z daty (Spark tego nie lubi)
-                if temp_df['Date'].dt.tz is not None:
-                    temp_df['Date'] = temp_df['Date'].dt.tz_localize(None)
-                
-                # Wybieramy i nazywamy kolumny
-                temp_df = temp_df[['Date', 'ticker', 'Close', 'Volume']]
-                temp_df.columns = ['trade_date', 'ticker', 'close_price', 'volume']
-                
-                all_data.append(temp_df)
-                print(f" OK: {ticker}")
+                df = df.reset_index()
+                all_data.append(df)
             else:
-                print(f" SKIP: {ticker} (brak danych w podanym zakresie)")
-            
-            # Przerwa, aby uniknąć blokady IP (Rate Limiting)
-            time.sleep(0.4)
-
+                print(f"No new data for package {chunk[:3]}...")
         except Exception as e:
-            print(f" BŁĄD {ticker}: {e}")
-            time.sleep(1)
+            print(f"Error while downloading package {chunk[:3]}: {e}")
 
     if not all_data:
-        print("!!! KRYTYCZNY BŁĄD: Nie pobrano danych dla żadnego instrumentu.")
+        print("All days actual, closing process.")
+        spark.stop()
         return
 
-    # 3. PRZETWARZANIE W SPARK
-    final_pd = pd.concat(all_data, ignore_index=True)
-    df_spark = spark.createDataFrame(final_pd)
     
-    df_to_save = df_spark.select(
+    full_pdf = pd.concat(all_data)
+
+    
+    full_pdf = full_pdf.rename(columns={
+        'symbol': 'ticker',
+        'date': 'trade_date',
+        'open': 'open_price',
+        'high': 'high_price',
+        'low': 'low_price',
+        'close': 'close_price'
+    })
+
+    
+    full_pdf['trade_date'] = full_pdf['trade_date'].astype(str)
+
+    
+    sdf = spark.createDataFrame(full_pdf)
+    final_sdf = sdf.select(
         F.col("ticker"),
         F.col("trade_date").cast("date"),
+        F.col("open_price").cast("decimal(12,2)"),
+        F.col("high_price").cast("decimal(12,2)"),
+        F.col("low_price").cast("decimal(12,2)"),
         F.col("close_price").cast("decimal(12,2)"),
-        F.col("volume").cast("long")
-    )
+        F.col("volume").cast("bigint")
+    ).dropDuplicates(["ticker", "trade_date"])
 
-    # 4. ZAPIS DO POSTGRESQL (Z filtrowaniem duplikatów)
-    try:
-        # Sprawdzamy co już mamy w bazie
-        db_df = spark.read.format("jdbc").options(**DB_CONF).option("dbtable", "f_stock_prices").load()
-        max_db_date = db_df.select(F.max("trade_date")).collect()[0][0]
-    except Exception:
-        print("Tabela f_stock_prices jest pusta lub nie istnieje. Inicjalizacja...")
-        max_db_date = None
-
-    if max_db_date is None:
-        max_db_date = date(2020, 1, 1)
-
-    # Tylko rekordy nowsze niż te w bazie
-    new_records = df_to_save.filter(F.col("trade_date") > max_db_date)
-    count = new_records.count()
-
-    if count > 0:
-        print(f"Dodaję {count} nowych wierszy do PostgreSQL...")
-        new_records.write.format("jdbc") \
-            .options(**DB_CONF) \
-            .option("dbtable", "f_stock_prices") \
-            .mode("append").save()
-        print("--- ZAPIS ZAKOŃCZONY ---")
-    else:
-        print("--- BRAK NOWYCH DANYCH DO DODANIA ---")
+    print(f"Saving {final_sdf.count()} new records to db...")
+    
+    final_sdf.write.format("jdbc") \
+        .options(**DB_CONF) \
+        .option("dbtable", "f_stock_prices") \
+        .mode("append") \
+        .save()
+    
+    print("--- PROCESS SUCESSFULL ---")
+    spark.stop()
 
 if __name__ == "__main__":
-    ingest_stocks()
+    fetch_and_save()
